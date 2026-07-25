@@ -68,10 +68,12 @@
   .portrait{ background:radial-gradient(120% 80% at 70% 0%, rgba(228,20,28,0.28), transparent 60%), linear-gradient(180deg, #171717 0%, #0a0a0a 100%); }
 
   /* --- 7F Kinetic Core --- */
-  .kc-section{ height:210vh; }
-  @media (max-width:768px){ .kc-section{ height:135vh; } }
-  .kc-section.kc-reduced{ height:auto; }
-  .kc-sticky{ position:sticky; top:0; height:100vh; overflow:hidden; background:#050505; }
+  /* высоты — фолбэк до инициализации JS; реальная высота = screens×100vh из KINETIC_SCROLL_CONFIG */
+  .kc-section{ height:600vh; }
+  @media (max-width:1024px){ .kc-section{ height:650vh; } }
+  @media (max-width:768px){ .kc-section{ height:720vh; } }
+  .kc-section.kc-reduced{ height:auto !important; }
+  .kc-sticky{ position:sticky; top:0; height:100vh; height:100svh; overflow:hidden; background:#050505; }
   .kc-reduced .kc-sticky{ position:relative; height:auto; min-height:100vh; }
   .kc-canvas{ position:absolute; inset:0; pointer-events:none; }
   .kc-canvas canvas{ display:block; width:100% !important; height:100% !important; }
@@ -91,6 +93,9 @@
     transition:opacity .5s ease, transform .5s cubic-bezier(0.22,1,0.36,1), color .3s ease; }
   .kc-item-n{ font-size:11px; color:rgba(255,255,255,0.3); font-variant-numeric:tabular-nums; transition:color .3s ease; }
   .kc-item.is-active{ color:#fff; transform:translateY(0) translateX(8px); }
+  /* в live-режиме opacity/transform пунктов ведёт JS покадрово — CSS-transition отключается */
+  .kc-live .kc-item{ transition:color .3s ease; }
+  .kc-live .kc-item.is-active{ color:#fff; }
   .kc-item.is-active .kc-item-n{ color:var(--accent); }
   @media (pointer:fine){ .kc-item:hover{ color:#fff; } .kc-item:hover .kc-item-n{ color:var(--accent); } }
   .kc-final{ position:absolute; left:0; right:0; bottom:9vh; text-align:center; pointer-events:none; }

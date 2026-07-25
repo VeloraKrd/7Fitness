@@ -2,13 +2,33 @@
    Загружается лениво из app.js (KineticCore), когда секция приближается к viewport.
    Архитектура: initKineticCore({ root, reduced }) → { destroy }.
    Модель процедурная; позже её можно заменить на GLB — достаточно переписать buildModel(),
-   не трогая сценарий, слои UI и жизненный цикл. */
+   не трогая сценарий, слои UI и жизненный цикл.
+
+   Сценарий — единый детерминированный «таймлайн» от прогресса скролла (0..1):
+   sticky-экран внутри высокой секции, прогресс сглаживается scrub-фильтром,
+   каждый из 7 пунктов имеет собственный сегмент enter → hold → exit. */
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-/* ================== НАСТРОЙКИ ==================
-   Все цвета, скорости, глубины разлёта и тайминги сценария — здесь. */
+/* ================== НАСТРОЙКИ СКРОЛЛА ==================
+   screens     — высота секции в экранах (высота = screens × 100vh);
+   scrub       — сглаживание прогресса, сек (аналог числового scrub в GSAP);
+   introShare  — доля таймлайна на интро (темнота → свечение → сборка логотипа);
+   stepsShare  — доля на семь пунктов (каждый пункт = stepsShare / 7);
+   finalShare  — доля на удержание «РЕЗУЛЬТАТ», сборку колец и финальную фразу;
+   step        — фазы внутри сегмента пункта (enter + hold + exit = 1). */
+const KINETIC_SCROLL_CONFIG = {
+  desktop: { screens: 6.0, scrub: 1.35, introShare: 0.11, stepsShare: 0.74, finalShare: 0.15,
+             step: { enter: 0.20, hold: 0.62, exit: 0.18 } },
+  tablet:  { screens: 6.5, scrub: 1.15, introShare: 0.10, stepsShare: 0.76, finalShare: 0.14,
+             step: { enter: 0.20, hold: 0.62, exit: 0.18 } },
+  mobile:  { screens: 7.2, scrub: 0.90, introShare: 0.09, stepsShare: 0.77, finalShare: 0.14,
+             step: { enter: 0.22, hold: 0.60, exit: 0.18 } },
+};
+const pickBreakpoint = () => innerWidth < 768 ? 'mobile' : (innerWidth <= 1024 ? 'tablet' : 'desktop');
+
+/* ================== НАСТРОЙКИ МОДЕЛИ ================== */
 const KC = {
   colors: {
     bg: 0x050505,
@@ -31,19 +51,18 @@ const KC = {
     [1.98, 2.18, 0.44, 7,  'graphite'],
   ],
   spreadZ: [0.55, -0.40, 0.70, -0.55, 0.50, -0.70, 0.35], // разлёт по Z при полном раскрытии
-  spinAngle: [1.4, -1.2, 1.0, -0.85, 0.7, -0.6, 0.5],     // угол поворота (рад) при полном раскрытии; знак = направление
-  idleSpin: { outer: 0.05, inner: -0.04 },                 // рад/с фонового вращения (внешнее и кольцо №3)
+  spinAngle: [1.4, -1.2, 1.0, -0.85, 0.7, -0.6, 0.5],     // угол поворота (рад) при полном раскрытии
+  idleSpin: { outer: 0.05, inner: -0.04 },                 // рад/с фонового вращения
+  driftSpin: 0.045,        // рад/с непрерывного дрейфа колец в раскрытом состоянии
   yawMax: 0.45,            // ~26° поворот модели при раскрытии
   tiltMax: 0.10,           // ~6° реакция на курсор
-  stages: { glow: [0.0, 0.15], logo: [0.15, 0.35], spread: [0.35, 0.70], merge: [0.70, 0.90], final: [0.90, 1.0] },
-  pulseAt: 0.355,          // момент импульса после сборки логотипа
+  activeRing: { z: 0.22, glow: 1.4, slow: 0.5 },           // активное кольцо: выдвижение, свечение, замедление
   desktop: { dpr: 1.5, modelX: 1.05, camZ: 5.6 },
   mobile:  { dpr: 1.25, modelY: -0.45, camZ: 6.6, spreadScale: 0.5, scale: 0.82 },
 };
 
 const clamp01 = v => Math.max(0, Math.min(1, v));
-const sub = (p, a, b) => clamp01((p - a) / (b - a));
-const easeIO = v => v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2;
+const ss = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }; // smoothstep
 const lerp = (a, b, t) => a + (b - a) * t;
 
 /* ---- Кольцо с прямоугольным сечением и фасками ---- */
@@ -87,13 +106,21 @@ export function initKineticCore({ root, reduced = false }) {
   const stickyEl = root.querySelector('.kc-sticky');
   const host = root.querySelector('.kc-canvas');
   const items = [...root.querySelectorAll('[data-kc-item]')];
-  const listEl = root.querySelector('.kc-list');
   const finalEl = root.querySelector('.kc-final');
   const els = [...root.querySelectorAll('.kc-el')];
 
   const finePointer = matchMedia('(pointer: fine)').matches;
   const isMobile = innerWidth < 768 || !finePointer;
   const M = isMobile ? KC.mobile : KC.desktop;
+
+  /* ---- Брейкпоинт и высота секции (аналог invalidateOnRefresh — пересчёт на resize) ---- */
+  let bp = pickBreakpoint();
+  let cfg = KINETIC_SCROLL_CONFIG[bp];
+  function applySectionHeight() {
+    if (!reduced) root.style.height = (cfg.screens * 100) + 'vh';
+  }
+  applySectionHeight();
+  if (!reduced) root.classList.add('kc-live');   // текстом пунктов управляет JS, CSS-transition отключается
 
   /* ---- Рендерер ---- */
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -125,7 +152,7 @@ export function initKineticCore({ root, reduced = false }) {
   scene.add(coreLight);
 
   /* ================== МОДЕЛЬ ================== */
-  const modelG = new THREE.Group();   // общий: позиция/наклон/поворот
+  const modelG = new THREE.Group();
   scene.add(modelG);
 
   const tones = KC.colors;
@@ -140,7 +167,6 @@ export function initKineticCore({ root, reduced = false }) {
     const body = new THREE.Mesh(ringGeometry(rIn, rOut, depth), metal);
     g.add(body);
 
-    /* сегменты-накладки: детерминированная раскладка, без случайных винтов */
     const rMid = (rIn + rOut) / 2, w = (rOut - rIn) * 0.92;
     const segGeo = new THREE.BoxGeometry(w * 1.4, w, depth + 0.055);
     const segMat = mkMetal(tone === 'graphite' ? 'gunmetal' : 'graphite', 0.45);
@@ -152,7 +178,6 @@ export function initKineticCore({ root, reduced = false }) {
       g.add(seg);
     }
 
-    /* красная emissive-линия по внутреннему краю (уникальный материал — для подсветки) */
     const glowMat = new THREE.MeshStandardMaterial({
       color: 0x000000, emissive: KC.colors.red, emissiveIntensity: 0.5, roughness: 0.4,
     });
@@ -181,7 +206,7 @@ export function initKineticCore({ root, reduced = false }) {
   halo.position.z = 0.185;
   coreG.add(halo);
 
-  /* --- Монограмма: «7» (красный металл) и «F» (холодный серебристый), входят с разных сторон --- */
+  /* --- Монограмма: «7» и «F», входят с разных сторон --- */
   const sevenMat = new THREE.MeshStandardMaterial({ color: KC.colors.redDeep, metalness: 0.9, roughness: 0.3 });
   const effMat = new THREE.MeshStandardMaterial({ color: KC.colors.silver, metalness: 1.0, roughness: 0.35 });
   const sevenG = new THREE.Group();
@@ -197,95 +222,140 @@ export function initKineticCore({ root, reduced = false }) {
 
   modelG.rotation.x = 0.06;
 
-  /* ================== РАСКЛАДКА ================== */
+  /* ================== РАСКЛАДКА ==================
+     Компоновка зависит от текущей ширины (а не от снимка при инициализации) —
+     корректно переживает resize и смену ориентации. */
+  let mobileLayout = isMobile;
+  let spreadScale = isMobile ? KC.mobile.spreadScale : 1;
   function layout() {
     const w = host.clientWidth, h = host.clientHeight;
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    if (isMobile) {
-      modelG.position.set(0, M.modelY, 0);
-      modelG.scale.setScalar(M.scale);
+    mobileLayout = w < 768;
+    spreadScale = mobileLayout ? KC.mobile.spreadScale : 1;
+    camera.position.z = mobileLayout ? KC.mobile.camZ : KC.desktop.camZ;
+    if (mobileLayout) {
+      modelG.position.set(0, KC.mobile.modelY, 0);
+      modelG.scale.setScalar(KC.mobile.scale);
     } else {
-      modelG.position.set(w >= 1100 ? M.modelX : M.modelX * 0.6, 0, 0);
+      modelG.position.set(w >= 1100 ? KC.desktop.modelX : KC.desktop.modelX * 0.6, 0, 0);
       modelG.scale.setScalar(1);
     }
   }
 
   /* ================== СЦЕНАРИЙ ==================
-     Всё детерминировано от p (0..1) — реверсивно при скролле вверх. */
-  const spreadScale = isMobile ? KC.mobile.spreadScale : 1;
-  const S = KC.stages;
+     Зоны таймлайна (доли 0..1) пересчитываются из конфига брейкпоинта. */
+  let Z = null;                       // зоны текущего брейкпоинта
+  function computeZones() {
+    const introEnd = cfg.introShare;
+    const finalStart = introEnd + cfg.stepsShare;
+    const f = cfg.finalShare;
+    Z = {
+      introEnd,
+      finalStart,
+      segLen: cfg.stepsShare / 7,
+      spreadIn: [introEnd, introEnd + 0.12],                       // кольца расходятся в начале зоны пунктов
+      resultHoldEnd: finalStart + f * 0.25,                        // «07 РЕЗУЛЬТАТ» остаётся видимым
+      merge: [finalStart + f * 0.10, finalStart + f * 0.55],       // сборка колец + разворот к пользователю
+      phraseIn: [finalStart + f * 0.55, finalStart + f * 0.75],    // финальная фраза, дальше — удержание до конца
+      pulseAt: introEnd,                                            // импульс сразу после сборки логотипа
+    };
+  }
+  computeZones();
+
   let hoverIdx = null;
   let tiltX = 0, tiltY = 0, tTiltX = 0, tTiltY = 0;
+  const ui = { els: false, active: -1, final: null };
+  const stepEnv = new Array(7).fill(0);
 
-  /* кэш UI-состояний, чтобы не дёргать DOM каждый кадр */
-  const ui = { els: false, itemsOn: -1, active: -2, dim: null, final: null };
+  /* Конверт сегмента пункта: enter → hold → exit (аналог addStep из ТЗ).
+     Для пункта 07 сегмент продлён до resultHoldEnd. */
+  function stepEnvelope(i, p) {
+    const s = Z.introEnd + i * Z.segLen;
+    const len = i === 6 ? (Z.resultHoldEnd - s) : Z.segLen;
+    const e = (p - s) / len;
+    if (e <= 0 || e >= 1) return 0;
+    const { enter, exit } = cfg.step;
+    return ss(0, enter, e) * (1 - ss(1 - exit, 1, e));
+  }
 
   function applyProgress(p, dt, t) {
-    const eGlow = easeIO(sub(p, S.glow[0], S.glow[1]));
-    const eLogo = easeIO(sub(p, S.logo[0], S.logo[1]));
-    const eOut = easeIO(sub(p, S.spread[0], S.spread[1]));
-    const eBack = easeIO(sub(p, S.merge[0], S.merge[1]));
-    const spread = eOut * (1 - eBack);
-    const eFinal = sub(p, S.final[0], S.final[1]);
+    /* --- интро: свет из темноты, сборка логотипа, импульс --- */
+    const eGlow = ss(0, Z.introEnd * 0.5, p);
+    const eLogo = ss(Z.introEnd * 0.35, Z.introEnd, p);
+    const pulse = Math.exp(-Math.pow(p - Z.pulseAt, 2) / (2 * 0.012 * 0.012));
 
-    /* этап 1: свет включается из темноты, красное ядро оживает */
-    const pulse = Math.exp(-Math.pow(p - KC.pulseAt, 2) / (2 * 0.015 * 0.015));
     key.intensity = 0.2 + 1.7 * eGlow;
     scene.environmentIntensity = 0.05 + 0.30 * eGlow;
     const idlePulse = reduced ? 0 : Math.sin(t * 1.4) * 0.1;
-    coreLight.intensity = 5.5 * Math.min(eGlow, sub(p, 0.04, 0.15)) * (0.85 + idlePulse) + pulse * 9;
+    coreLight.intensity = 5.5 * eGlow * (0.85 + idlePulse) + pulse * 9;
     haloMat.emissiveIntensity = 0.25 + 0.55 * eGlow + pulse * 1.6 + idlePulse * 0.3;
 
-    /* этап 2: «7» слева, «F» справа → сборка логотипа */
     sevenG.position.x = sevenX - 1.7 * (1 - eLogo);
     effG.position.x = effX + 1.7 * (1 - eLogo);
     sevenG.position.z = logoZ + 0.5 * (1 - eLogo);
     effG.position.z = logoZ + 0.5 * (1 - eLogo);
 
-    /* этапы 3–4: разлёт по глубине + вращение, затем сборка */
+    /* --- раскрытие/сборка колец --- */
+    const spread = ss(Z.spreadIn[0], Z.spreadIn[1], p) * (1 - ss(Z.merge[0], Z.merge[1], p));
+
+    /* --- пункты: конверты enter/hold/exit --- */
+    let active = -1;
+    for (let i = 0; i < 7; i++) {
+      stepEnv[i] = stepEnvelope(i, p);
+      if (stepEnv[i] > 0.6) active = i;
+    }
+
     rings.forEach((r, i) => {
-      const hlT = (hoverIdx === i ? 1 : 0) + (ui.active === i ? 0.7 : 0);
-      r.hl = lerp(r.hl, Math.min(hlT, 1), reduced ? 1 : Math.min(1, dt * 6));
+      const env = stepEnv[i];
+      const hlT = Math.max(env, hoverIdx === i ? 1 : 0);
+      r.hl = reduced ? hlT : lerp(r.hl, hlT, Math.min(1, dt * 6));
       const dim = hoverIdx !== null && hoverIdx !== i ? 0.5 : 1;
       r.metal.color.copy(r.baseColor).multiplyScalar(lerp(1, dim, 0.8));
       r.segMat.color.copy(r.baseSeg).multiplyScalar(lerp(1, dim, 0.8));
-      r.g.position.z = KC.spreadZ[i] * spread * spreadScale + r.hl * 0.15;
-      r.g.rotation.z = r.idle + KC.spinAngle[i] * spread;
-      r.glowMat.emissiveIntensity = (0.2 + 0.5 * eGlow) * (1 + spread * 0.8) + r.hl * 1.4 + pulse * 0.8;
+      r.g.position.z = KC.spreadZ[i] * spread * spreadScale + r.hl * KC.activeRing.z;
+      /* активное кольцо вращается медленнее соседних */
+      r.g.rotation.z = r.idle + KC.spinAngle[i] * spread * (1 - KC.activeRing.slow * r.hl);
+      r.glowMat.emissiveIntensity = (0.2 + 0.5 * eGlow) * (1 + spread * 0.8) + r.hl * KC.activeRing.glow + pulse * 0.8;
     });
 
-    /* поворот модели при раскрытии + наклон за курсором */
+    /* --- модель: поворот при раскрытии, наклон за курсором, парение --- */
     modelG.rotation.y = KC.yawMax * spread + tiltY;
     modelG.rotation.x = 0.06 + spread * 0.10 + tiltX;
-    if (!reduced) modelG.position.y = (isMobile ? M.modelY : 0) + Math.sin(t * 0.6) * 0.025;
+    if (!reduced) modelG.position.y = (mobileLayout ? KC.mobile.modelY : 0) + Math.sin(t * 0.6) * 0.025;
 
-    /* ---- HTML-слой (только при изменении состояния) ---- */
-    const showEls = p > 0.04;
+    /* ---- HTML-слой ---- */
+    const showEls = p > 0.02;
     if (showEls !== ui.els) { ui.els = showEls; els.forEach(el => el.classList.toggle('is-on', showEls)); }
 
-    let active = -1, itemsOn = -1;
-    if (p >= S.spread[0] + 0.01 && p < 0.72) {
-      active = Math.min(6, Math.floor(sub(p, 0.36, 0.68) * 7));
-      itemsOn = active;
-    } else if (p >= 0.72) { itemsOn = 6; }
-    if (itemsOn !== ui.itemsOn || active !== ui.active) {
-      ui.itemsOn = itemsOn; ui.active = active;
-      items.forEach((el, i) => {
-        el.classList.toggle('is-on', i <= itemsOn);
-        el.classList.toggle('is-active', i === active);
-      });
+    if (!reduced) {
+      /* текст пунктов: opacity/translateY напрямую из конверта (плавно и реверсивно) */
+      for (let i = 0; i < 7; i++) {
+        const env = stepEnv[i];
+        const el = items[i];
+        const s = Z.introEnd + i * Z.segLen;
+        const len = i === 6 ? (Z.resultHoldEnd - s) : Z.segLen;
+        const e = clamp01((p - s) / len);
+        const eIn = ss(0, cfg.step.enter, e);
+        const eOut = ss(1 - cfg.step.exit, 1, e);
+        el.style.opacity = (eIn * (1 - eOut)).toFixed(3);
+        el.style.transform = `translateY(${(20 * (1 - eIn) - 12 * eOut).toFixed(1)}px) translateX(${(8 * env).toFixed(1)}px)`;
+      }
     }
-    const dim = p >= 0.74;
-    if (dim !== ui.dim) { ui.dim = dim; listEl.classList.toggle('is-dim', dim); }
-    const fin = eFinal > 0.1;
+    if (active !== ui.active) {
+      ui.active = active;
+      items.forEach((el, i) => el.classList.toggle('is-active', i === active));
+    }
+
+    const fin = ss(Z.phraseIn[0], Z.phraseIn[1], p) > 0.2;
     if (fin !== ui.final) { ui.final = fin; finalEl.classList.toggle('is-on', fin); }
   }
 
   /* ================== ЦИКЛ ================== */
   const timer = new THREE.Timer();
   let raf = 0, running = false, destroyed = false;
+  let pSmooth = null;
 
   function progress() {
     const rect = root.getBoundingClientRect();
@@ -298,19 +368,36 @@ export function initKineticCore({ root, reduced = false }) {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.05);
     const t = timer.getElapsed();
-    /* idle: внешнее кольцо и кольцо №3 медленно вращаются в противофазе */
+
+    /* scrub: прогресс догоняет цель с постоянной времени cfg.scrub (сек) */
+    const pTarget = progress();
+    pSmooth = pSmooth === null ? pTarget : lerp(pSmooth, pTarget, 1 - Math.exp(-dt / cfg.scrub));
+
+    /* idle: фон + непрерывный дрейф колец в раскрытом состоянии — движение не замирает */
+    const spreadNow = ss(Z.spreadIn[0], Z.spreadIn[1], pSmooth) * (1 - ss(Z.merge[0], Z.merge[1], pSmooth));
+    rings.forEach((r, i) => {
+      const dir = i % 2 ? -1 : 1;
+      r.idle += dir * KC.driftSpin * spreadNow * (1 - KC.activeRing.slow * r.hl) * dt;
+    });
     rings[6].idle += KC.idleSpin.outer * dt;
     rings[2].idle += KC.idleSpin.inner * dt;
+
     tiltX = lerp(tiltX, tTiltX, Math.min(1, dt * 4));
     tiltY = lerp(tiltY, tTiltY, Math.min(1, dt * 4));
-    applyProgress(progress(), dt, t);
+    applyProgress(pSmooth, dt, t);
     renderer.render(scene, camera);
   }
   function start() { if (!running && !destroyed) { running = true; timer.update(); raf = requestAnimationFrame(frame); } }
   function stop() { running = false; cancelAnimationFrame(raf); }
 
   /* ================== СОБЫТИЯ ================== */
-  const onResize = () => { layout(); if (reduced) renderStatic(); };
+  const onResize = () => {
+    const nbp = pickBreakpoint();
+    if (nbp !== bp) { bp = nbp; cfg = KINETIC_SCROLL_CONFIG[bp]; computeZones(); }
+    applySectionHeight();
+    layout();
+    if (reduced) renderStatic();
+  };
   addEventListener('resize', onResize);
 
   let io = null;
@@ -342,12 +429,11 @@ export function initKineticCore({ root, reduced = false }) {
     }
   }
 
-  /* reduced motion: собранная модель, один статичный рендер */
+  /* reduced motion: собранная модель, статичный рендер, весь текст читаем через классы */
   function renderStatic() {
     applyProgress(1, 1, 0);
-    /* в reduced-режиме текст остаётся полностью читаемым */
-    listEl.classList.remove('is-dim');
-    items.forEach(el => el.classList.add('is-on'));
+    items.forEach(el => { el.classList.add('is-on'); el.style.opacity = ''; el.style.transform = ''; });
+    finalEl.classList.add('is-on');
     modelG.rotation.y = 0; modelG.rotation.x = 0.06;
     renderer.render(scene, camera);
   }
@@ -362,6 +448,8 @@ export function initKineticCore({ root, reduced = false }) {
     removeEventListener('resize', onResize);
     listeners.forEach(([el, ev, fn]) => el.removeEventListener(ev, fn));
     if (io) io.disconnect();
+    root.style.height = '';
+    root.classList.remove('kc-live');
     scene.traverse(o => {
       if (o.isMesh) {
         o.geometry.dispose();
