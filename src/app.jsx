@@ -192,6 +192,85 @@ function Hero(){
   );
 }
 
+/* ---------------- 7F Kinetic Core (3D-секция) ----------------
+   HTML-текст живёт здесь (SEO/доступность), 3D — в assets/kinetic-core.js,
+   грузится лениво при приближении секции. Классами .is-on управляет 3D-модуль. */
+const KC_ITEMS = ['СИЛА','ВЫНОСЛИВОСТЬ','СКОРОСТЬ','МОБИЛЬНОСТЬ','ДИСЦИПЛИНА','ВОССТАНОВЛЕНИЕ','РЕЗУЛЬТАТ'];
+
+function KineticCore(){
+  const rootRef = useRef(null);
+  useEffect(()=>{
+    const root = rootRef.current;
+    if (!root) return;
+    const params = new URLSearchParams(location.search);
+    const reduced = params.has('kc-reduced') ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const glOk = !params.has('kc-nowebgl') && (()=>{
+      try {
+        const c = document.createElement('canvas');
+        return !!(c.getContext('webgl2') || c.getContext('webgl'));
+      } catch(e){ return false; }
+    })();
+
+    const showAll = () => root.querySelectorAll('.kc-el, .kc-item, .kc-final')
+      .forEach(el => el.classList.add('is-on'));
+
+    if (reduced) { root.classList.add('kc-reduced'); showAll(); }
+    if (!glOk) { root.classList.add('kc-fallback'); showAll(); return; }
+
+    let destroyed = false, api = null;
+    const io = new IntersectionObserver((es)=>{
+      if (!es.some(e=>e.isIntersecting)) return;
+      io.disconnect();
+      import('./kinetic-core.js')
+        .then(m => { if (!destroyed) api = m.initKineticCore({ root, reduced }); })
+        .catch(() => { root.classList.add('kc-fallback'); showAll(); });
+    }, { rootMargin:'450px 0px' });
+    /* не грузить 3D раньше, чем страница (включая hero-видео) закончит загрузку */
+    const startObserving = () => { if (!destroyed) io.observe(root); };
+    if (document.readyState === 'complete') startObserving();
+    else window.addEventListener('load', startObserving, { once:true });
+
+    return ()=>{
+      destroyed = true;
+      window.removeEventListener('load', startObserving);
+      io.disconnect();
+      if (api) api.destroy();
+    };
+  },[]);
+
+  return (
+    <section id="kinetic" ref={rootRef} className="kc-section relative bg-ink">
+      <div className="kc-sticky grain">
+        <div className="kc-canvas" aria-hidden="true"></div>
+        <div className="kc-poster" aria-hidden="true"><span>7<em>F</em></span></div>
+        <div className="kc-content mx-auto max-w-[1400px] px-5 sm:px-8">
+          <div className="kc-text">
+            <p className="kc-el text-accent text-xs tracking-[0.35em] font-medium mb-6">7F KINETIC CORE</p>
+            <h2 className="kc-el font-display font-extrabold display-tight text-[clamp(2.3rem,5vw,4.4rem)]">
+              ТВОЙ ПРОГРЕСС<br/>ИМЕЕТ ФОРМУ
+            </h2>
+            <p className="kc-el mt-6 text-mute leading-relaxed">
+              7 элементов.<br/>Одна система.<br/><span className="text-accent">Лучший результат.</span>
+            </p>
+            <ul className="kc-list mt-9">
+              {KC_ITEMS.map((w,i)=>(
+                <li key={w} data-kc-item={i} className="kc-item">
+                  <span className="kc-item-n">0{i+1}</span>
+                  <span className="kc-item-w">{w}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="kc-final font-display font-extrabold display-tight text-[clamp(1.9rem,4.2vw,3.6rem)]">
+            ВСЁ СХОДИТСЯ<br/>В ОДНОМ МЕСТЕ
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ---------------- Бегущая строка ---------------- */
 function Marquee(){
   const items = ['СИЛА','·','ВЫНОСЛИВОСТЬ','·','СВОБОДНЫЕ ВЕСА','·','ГРУППОВЫЕ','·','ДОСТУП 24/7','·','ВОССТАНОВЛЕНИЕ','·'];
@@ -490,6 +569,7 @@ function App(){
     <main className="bg-ink">
       <Header />
       <Hero />
+      <KineticCore />
       <Marquee />
       <Why />
       <Trainers />

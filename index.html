@@ -19,6 +19,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 
+<!-- three.js для 3D-прелоадера (гантель 7F) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
+  }
+}
+</script>
+
 <!-- Tailwind + React + Framer Motion (CDN) -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
@@ -56,10 +66,264 @@
   .snap-x-mandatory{ scroll-snap-type:x mandatory; }
   .snap-start{ scroll-snap-align:start; }
   .portrait{ background:radial-gradient(120% 80% at 70% 0%, rgba(228,20,28,0.28), transparent 60%), linear-gradient(180deg, #171717 0%, #0a0a0a 100%); }
+
+  /* --- 7F Kinetic Core --- */
+  .kc-section{ height:210vh; }
+  @media (max-width:768px){ .kc-section{ height:135vh; } }
+  .kc-section.kc-reduced{ height:auto; }
+  .kc-sticky{ position:sticky; top:0; height:100vh; overflow:hidden; background:#050505; }
+  .kc-reduced .kc-sticky{ position:relative; height:auto; min-height:100vh; }
+  .kc-canvas{ position:absolute; inset:0; pointer-events:none; }
+  .kc-canvas canvas{ display:block; width:100% !important; height:100% !important; }
+  .kc-content{ position:relative; z-index:2; height:100%; display:flex; flex-direction:column; justify-content:center; pointer-events:none; }
+  .kc-reduced .kc-content{ min-height:100vh; padding-top:14vh; padding-bottom:14vh; justify-content:flex-start; }
+  .kc-text{ max-width:420px; pointer-events:auto; }
+  @media (max-width:768px){
+    .kc-content{ justify-content:flex-start; padding-top:11vh; }
+    .kc-text{ max-width:100%; }
+  }
+  .kc-el, .kc-item, .kc-final{ opacity:0; transform:translateY(18px);
+    transition:opacity .6s ease, transform .6s cubic-bezier(0.22,1,0.36,1); }
+  .kc-el.is-on, .kc-item.is-on, .kc-final.is-on{ opacity:1; transform:translateY(0); }
+  .kc-list{ list-style:none; padding:0; margin-top:2.2rem; transition:opacity .6s ease; }
+  .kc-list.is-dim{ opacity:0.25; }
+  .kc-item{ display:flex; align-items:center; gap:18px; padding:7px 0; font-size:13px; letter-spacing:0.18em; color:rgba(255,255,255,0.55);
+    transition:opacity .5s ease, transform .5s cubic-bezier(0.22,1,0.36,1), color .3s ease; }
+  .kc-item-n{ font-size:11px; color:rgba(255,255,255,0.3); font-variant-numeric:tabular-nums; transition:color .3s ease; }
+  .kc-item.is-active{ color:#fff; transform:translateY(0) translateX(8px); }
+  .kc-item.is-active .kc-item-n{ color:var(--accent); }
+  @media (pointer:fine){ .kc-item:hover{ color:#fff; } .kc-item:hover .kc-item-n{ color:var(--accent); } }
+  .kc-final{ position:absolute; left:0; right:0; bottom:9vh; text-align:center; pointer-events:none; }
+  .kc-reduced .kc-final, .kc-fallback .kc-final{ position:static; margin-top:3rem; text-align:left; }
+  /* постер-fallback без WebGL: концентрические кольца + монограмма (если положить
+     assets/kinetic-poster.jpg — он ляжет поверх CSS-колец автоматически) */
+  .kc-poster{ display:none; position:absolute; inset:0; pointer-events:none;
+    background:
+      url('assets/kinetic-poster.jpg') center right/cover no-repeat,
+      repeating-radial-gradient(circle at 72% 50%, rgba(255,255,255,0.05) 0 2px, transparent 2px 46px),
+      radial-gradient(38% 38% at 72% 50%, rgba(228,20,28,0.18), transparent 70%),
+      #050505; }
+  .kc-poster span{ position:absolute; top:50%; left:72%; transform:translate(-50%,-50%);
+    font-family:'Manrope',sans-serif; font-weight:800; font-size:clamp(64px,9vw,130px); letter-spacing:-0.03em; color:#f4f4f4; }
+  .kc-poster span em{ font-style:normal; color:var(--accent); }
+  @media (max-width:768px){
+    .kc-poster{ background-position:center 78%, center 78%, center 78%; }
+    .kc-poster span{ left:50%; top:72%; }
+  }
+  .kc-fallback .kc-canvas{ display:none; }
+  .kc-fallback .kc-poster{ display:block; }
+  .kc-fallback.kc-section{ height:auto; }
+  .kc-fallback .kc-sticky{ position:relative; height:auto; min-height:100vh; }
+
+  /* --- 3D-прелоадер --- */
+  #preloader3d { position:fixed; inset:0; z-index:999; background:#050505; overflow:hidden; }
+  #preloader3d canvas { position:absolute; inset:0; display:block; }
+  #preloader3d .pl-ui { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:clamp(36px,8vh,72px); gap:16px; pointer-events:none; }
+  #preloader3d .pl-logo { font-family:'Manrope',sans-serif; font-weight:800; font-size:clamp(40px,6vw,64px); letter-spacing:-0.03em; line-height:1; color:#fff; }
+  #preloader3d .pl-logo em { font-style:normal; color:var(--accent); }
+  #preloader3d .pl-tag { font-size:10px; letter-spacing:0.4em; color:#B5B5B5; }
+  #preloader3d .pl-bar { width:min(260px,56vw); height:1px; background:rgba(255,255,255,0.12); overflow:hidden; }
+  #preloader3d .pl-bar i { display:block; height:100%; width:100%; background:var(--accent); transform:scaleX(0); transform-origin:left; }
+  #preloader3d .pl-num { font-size:11px; color:#B5B5B5; letter-spacing:0.3em; font-variant-numeric:tabular-nums; }
+  @media (prefers-reduced-motion: reduce){ #preloader3d { display:none; } }
 </style>
 </head>
 <body class="bg-ink text-white font-sans antialiased overflow-x-hidden">
+
+<!-- 3D-прелоадер: вращающаяся гантель 7F (three.js), автономный — не трогает React-приложение -->
+<div id="preloader3d" aria-hidden="true">
+  <div class="pl-ui">
+    <div class="pl-logo">7<em>F</em></div>
+    <div class="pl-tag">ФИТНЕС-КЛУБ · 24/7</div>
+    <div class="pl-bar"><i></i></div>
+    <div class="pl-num">0%</div>
+  </div>
+</div>
+
 <div id="root"></div>
 <script src="assets/app.js"></script>
+
+<script>
+  /* Страховка: если three.js не поднялся за 6с — просто убрать прелоадер */
+  setTimeout(function () {
+    var p = document.getElementById('preloader3d');
+    if (p && !window.__pl3dReady) { p.remove(); document.body.style.overflow = ''; }
+  }, 6000);
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const pl = document.getElementById('preloader3d');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+if (pl && !reduced) {
+  document.body.style.overflow = 'hidden';
+
+  /* ---- Рендерер (лёгкий: без теней и постобработки) ---- */
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  pl.prepend(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050505);
+  scene.fog = new THREE.Fog(0x050505, 5, 12);
+
+  const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 50);
+  camera.position.set(0, 0.35, 4.3);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  scene.environment = envRT.texture;
+  scene.environmentIntensity = 0.35;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  key.position.set(3, 5, 4);
+  scene.add(key);
+  const redRim = new THREE.PointLight(0xE4141C, 40, 12);
+  redRim.position.set(-3.2, 1.2, -2.2);
+  scene.add(redRim);
+  const goldRim = new THREE.PointLight(0xD8B36A, 16, 10);
+  goldRim.position.set(2.6, 0.4, -2.8);
+  scene.add(goldRim);
+
+  /* ---- Логотип 7F на блине ---- */
+  function makeLogoTexture() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 512;
+    const x = c.getContext('2d');
+    x.fillStyle = '#101010'; x.fillRect(0, 0, 512, 512);
+    x.strokeStyle = 'rgba(255,255,255,0.16)'; x.lineWidth = 8;
+    x.beginPath(); x.arc(256, 256, 224, 0, Math.PI * 2); x.stroke();
+    x.strokeStyle = '#E4141C'; x.lineWidth = 5;
+    x.beginPath(); x.arc(256, 256, 196, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '800 210px Manrope, Arial, sans-serif';
+    x.fillStyle = '#f4f4f4'; x.fillText('7', 180, 268);
+    x.fillStyle = '#E4141C'; x.fillText('F', 330, 268);
+    x.font = '600 30px Manrope, Arial, sans-serif';
+    x.fillStyle = 'rgba(255,255,255,0.45)';
+    x.fillText('FITNESS CLUB · 24/7', 256, 430);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return tex;
+  }
+
+  /* ---- Гантель ---- */
+  function cyl(r, len) {
+    const g = new THREE.CylinderGeometry(r, r, len, 48);
+    g.rotateZ(Math.PI / 2);
+    return g;
+  }
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 1, roughness: 0.22 });
+  const darkSteel = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.9, roughness: 0.42 });
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x0e0e0e, metalness: 0.15, roughness: 0.62 });
+  const redRing = new THREE.MeshStandardMaterial({ color: 0xE4141C, metalness: 0.4, roughness: 0.35 });
+  const logoTex = makeLogoTexture();
+  const logoMat = new THREE.MeshStandardMaterial({ map: logoTex, metalness: 0.2, roughness: 0.5 });
+
+  const dumbbell = new THREE.Group();
+  dumbbell.add(new THREE.Mesh(cyl(0.045, 2.3), chrome));
+  dumbbell.add(new THREE.Mesh(cyl(0.055, 0.6), darkSteel));
+  for (const s of [-1, 1]) {
+    const collar = new THREE.Mesh(cyl(0.095, 0.12), chrome);
+    collar.position.x = s * 0.72;
+    dumbbell.add(collar);
+  }
+  const PLATES = [[0.86, 0.44, 0.115], [0.985, 0.36, 0.105], [1.1, 0.28, 0.095]];
+  PLATES.forEach(([px, r, th], i) => {
+    for (const s of [-1, 1]) {
+      const plate = new THREE.Mesh(cyl(r, th), rubber);
+      plate.position.x = s * px;
+      dumbbell.add(plate);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(r - 0.012, 0.013, 20, 72), i === 0 ? redRing : darkSteel);
+      rim.rotation.y = Math.PI / 2;
+      rim.position.x = s * (px + th / 2 * 0.55);
+      dumbbell.add(rim);
+    }
+  });
+  /* логотип — диски на внешних блинах (торцы цилиндра переворачивают UV) */
+  const [opx, orr, oth] = PLATES[PLATES.length - 1];
+  for (const s of [-1, 1]) {
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(orr * 0.93, 48), logoMat);
+    disc.position.x = s * (opx + oth / 2 + 0.003);
+    disc.rotation.y = s * Math.PI / 2;
+    dumbbell.add(disc);
+  }
+  dumbbell.rotation.z = -0.12;
+  scene.add(dumbbell);
+
+  /* Шрифт Manrope мог загрузиться позже — перерисовать логотип */
+  if (document.fonts) document.fonts.load('800 210px Manrope').then(() => {
+    logoMat.map = makeLogoTexture();
+    logoMat.needsUpdate = true;
+  }).catch(() => {});
+
+  /* ---- Прогресс: до 90% сам, до 100% по window.load; минимум 2.2с показа ---- */
+  const num = pl.querySelector('.pl-num');
+  const bar = pl.querySelector('.pl-bar i');
+  const t0 = performance.now();
+  let loaded = document.readyState === 'complete';
+  addEventListener('load', () => { loaded = true; });
+  setTimeout(() => { loaded = true; }, 5000);   // не ждать тяжёлое видео дольше 5с
+  let p = 0, exiting = false;
+
+  const timer = new THREE.Timer();
+  renderer.setAnimationLoop(() => {
+    timer.update();
+    const dt = Math.min(timer.getDelta(), 0.05);
+    const t = timer.getElapsed();
+    dumbbell.rotation.y += 0.55 * dt;
+    dumbbell.position.y = Math.sin(t * 0.9) * 0.05;
+    redRim.intensity = 40 + Math.sin(t * 2.1) * 8;
+
+    const minShown = performance.now() - t0 > 2200;
+    const target = (loaded && minShown) ? 100 : 90;
+    p += (target - p) * Math.min(1, dt * 2.2);
+    num.textContent = Math.round(p) + '%';
+    bar.style.transform = 'scaleX(' + (p / 100) + ')';
+
+    renderer.render(scene, camera);
+
+    if (p > 99.5 && !exiting) { exiting = true; exit(); }
+  });
+
+  const onResize = () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  };
+  addEventListener('resize', onResize);
+
+  function exit() {
+    pl.animate(
+      [{ transform: 'translateY(0)' }, { transform: 'translateY(-100%)' }],
+      { duration: 850, easing: 'cubic-bezier(0.22,1,0.36,1)', fill: 'forwards' }
+    ).onfinish = () => {
+      renderer.setAnimationLoop(null);
+      removeEventListener('resize', onResize);
+      scene.traverse(o => {
+        if (o.isMesh) {
+          o.geometry.dispose();
+          (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+            if (m.map) m.map.dispose();
+            m.dispose();
+          });
+        }
+      });
+      envRT.dispose(); pmrem.dispose(); renderer.dispose();
+      pl.remove();
+      document.body.style.overflow = '';
+    };
+  }
+}
+window.__pl3dReady = true;
+</script>
 </body>
 </html>
